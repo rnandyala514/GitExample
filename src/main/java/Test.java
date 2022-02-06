@@ -6,5 +6,6 @@ public class Test {
         System.out.println("--------4 from fix1 branch");
         System.out.println("--------5 from fork branch");
         System.out.println("--------6 from fork branch");
+        System.out.println("--------7 from fork branch");
     }
 }

@@ -3,8 +3,52 @@ import re
 import pandas as pd
 from transformers import pipeline
 
-# Step 1: Validate Data Against Mapped Rules
+# Step 1: Extract Rules from PDF/Text
+def extract_rules_from_text(document_text):
+    """
+    Use a Generative AI model to extract rules from the regulatory document.
+    """
+    generator = pipeline("text-generation", model="gpt2", device="cpu")  # Change to "cuda" or "mps" if GPU is available
+
+    prompt = f"""
+    Analyze the following regulatory document and generate data profiling rules:
+    {document_text}
+
+    Rules:
+    """
+    response = generator(prompt, max_new_tokens=200, truncation=True)
+    rules_text = response[0]["generated_text"].strip()
+
+    # Parse the rules into a structured format
+    rules = []
+    for line in rules_text.split("\n"):
+        if "Field" in line:
+            field_name = re.search(r"Field '(.*?)'", line)
+            rule_description = line.strip()
+            if field_name:
+                rules.append({
+                    "field": field_name.group(1),
+                    "rule": rule_description
+                })
+    return rules
+
+# Step 2: Map Rules to Data Fields
+def map_rules_to_fields(rules, df_columns):
+    """
+    Map the extracted rules to the columns in the dataset.
+    """
+    field_mapping = {}
+    for rule in rules:
+        field = rule["field"]
+        if field in df_columns:
+            field_mapping[field] = rule["rule"]
+    return field_mapping
+
+# Step 3: Validate Data Against Rules
 def validate_data(df, field_mapping):
+    """
+    Validate the data against the mapped rules.
+    """
     validation_results = {}
     for field, rule in field_mapping.items():
         if field in df.columns:
@@ -13,15 +57,17 @@ def validate_data(df, field_mapping):
             elif "must be a positive number" in rule:
                 validation_results[field] = df[field].apply(lambda x: x > 0)
             elif "must be in YYYY-MM-DD format" in rule:
-                # Correct regex for YYYY-MM-DD format
                 validation_results[field] = df[field].apply(lambda x: bool(re.match(r"^\d{4}-\d{2}-\d{2}$", str(x))))
             elif "must be above" in rule:
                 threshold = float(re.search(r"above (.*?)%", rule).group(1))
                 validation_results[field] = df[field].apply(lambda x: x > threshold)
     return validation_results
 
-# Step 2: Suggest Remediation Actions using Hugging Face
+# Step 4: Suggest Remediation Actions
 def suggest_remediation(df, field_mapping, validation_results):
+    """
+    Suggest remediation actions for each violation.
+    """
     suggestions = []
     generator = pipeline("text-generation", model="gpt2", device="cpu")  # Change to "cuda" or "mps" if GPU is available
 
@@ -97,17 +143,26 @@ if __name__ == "__main__":
     }
     df = pd.DataFrame(data)
 
-    # Step 1: Define field mapping and validate data
-    field_mapping = {
-        "Customer_ID": "Field 'Customer_ID' must be a 10-digit number.",
-        "Transaction_Amount": "Field 'Transaction_Amount' must be a positive number.",
-        "Transaction_Date": "Field 'Transaction_Date' must be in YYYY-MM-DD format.",
-        "Capital_Adequacy_Ratio": "Field 'Capital_Adequacy_Ratio' must be above 8%.",
-    }
+    # Step 1: Extract rules from the regulatory document
+    regulatory_text = """
+    Regulatory Reporting Requirements:
+    1. Field 'Customer_ID' must be a 10-digit number.
+    2. Field 'Transaction_Amount' must be a positive number.
+    3. Field 'Transaction_Date' must be in YYYY-MM-DD format.
+    4. Field 'Capital_Adequacy_Ratio' must be above 8%.
+    """
+    rules = extract_rules_from_text(regulatory_text)
+    print("\nExtracted Rules:\n", rules)
+
+    # Step 2: Map rules to dataset fields
+    field_mapping = map_rules_to_fields(rules, df.columns)
+    print("\nField Mapping:\n", field_mapping)
+
+    # Step 3: Validate data against mapped rules
     validation_results = validate_data(df, field_mapping)
     print("\nValidation Results:\n", validation_results)
 
-    # Step 2: Suggest remediation actions for flagged issues
+    # Step 4: Suggest remediation actions for flagged issues
     remediation_actions = suggest_remediation(df, field_mapping, validation_results)
     print("\nSuggested Remediation Actions (JSON):\n", remediation_actions)
 

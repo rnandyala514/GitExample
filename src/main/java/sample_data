@@ -1,0 +1,8 @@
+# Step 1: Extract rules from the regulatory document
+    regulatory_text = """
+    Regulatory Reporting Requirements:
+    1. Field 'Customer_ID' must be a 10-digit number.
+    2. Field 'Transaction_Amount' must be a positive number.
+    3. Field 'Transaction_Date' must be in YYYY-MM-DD format.
+    4. Field 'Capital_Adequacy_Ratio' must be above 8%.
+    """

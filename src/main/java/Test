@@ -2,8 +2,21 @@ import json
 import re
 import pandas as pd
 from transformers import pipeline
+import PyPDF2  # For PDF text extraction
 
-# Step 1: Extract Rules from PDF/Text
+# Step 1: Extract Text from PDF
+def extract_text_from_pdf(pdf_path):
+    """
+    Extract text from a PDF file.
+    """
+    with open(pdf_path, "rb") as file:
+        reader = PyPDF2.PdfReader(file)
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text()
+    return text
+
+# Step 2: Extract Rules from Unstructured Text
 def extract_rules_from_text(document_text):
     """
     Use a Generative AI model to extract rules from the regulatory document.
@@ -11,7 +24,7 @@ def extract_rules_from_text(document_text):
     generator = pipeline("text-generation", model="gpt2", device="cpu")  # Change to "cuda" or "mps" if GPU is available
 
     prompt = f"""
-    Analyze the following regulatory document and generate data profiling rules:
+    Analyze the following regulatory document and extract data profiling rules:
     {document_text}
 
     Rules:
@@ -32,7 +45,7 @@ def extract_rules_from_text(document_text):
                 })
     return rules
 
-# Step 2: Map Rules to Data Fields
+# Step 3: Map Rules to Data Fields
 def map_rules_to_fields(rules, df_columns):
     """
     Map the extracted rules to the columns in the dataset.
@@ -44,7 +57,7 @@ def map_rules_to_fields(rules, df_columns):
             field_mapping[field] = rule["rule"]
     return field_mapping
 
-# Step 3: Validate Data Against Rules
+# Step 4: Validate Data Against Rules
 def validate_data(df, field_mapping):
     """
     Validate the data against the mapped rules.
@@ -63,7 +76,7 @@ def validate_data(df, field_mapping):
                 validation_results[field] = df[field].apply(lambda x: x > threshold)
     return validation_results
 
-# Step 4: Suggest Remediation Actions
+# Step 5: Suggest Remediation Actions
 def suggest_remediation(df, field_mapping, validation_results):
     """
     Suggest remediation actions for each violation.
@@ -134,35 +147,27 @@ def cleanup_remediation_action(action, field, value):
 
 # Main Workflow
 if __name__ == "__main__":
-    # Sample banking data (replace with actual dataset)
-    data = {
-        "Customer_ID": [1234567890, 987654321, 123456789, 12345678901],
-        "Transaction_Amount": [100.50, -200.00, 300.75, 400.00],
-        "Transaction_Date": ["2023-10-01", "2023-10-02", "2023/10/03", "2023-10-04"],
-        "Capital_Adequacy_Ratio": [9.5, 7.2, 8.8, 6.5],
-    }
-    df = pd.DataFrame(data)
+    # Step 1: Extract text from the regulatory PDF
+    pdf_path = "regulatory_document.pdf"  # Replace with your PDF file path
+    regulatory_text = extract_text_from_pdf(pdf_path)
+    print("Extracted Text from PDF:\n", regulatory_text)
 
-    # Step 1: Extract rules from the regulatory document
-    regulatory_text = """
-    Regulatory Reporting Requirements:
-    1. Field 'Customer_ID' must be a 10-digit number.
-    2. Field 'Transaction_Amount' must be a positive number.
-    3. Field 'Transaction_Date' must be in YYYY-MM-DD format.
-    4. Field 'Capital_Adequacy_Ratio' must be above 8%.
-    """
+    # Step 2: Extract rules from the regulatory text
     rules = extract_rules_from_text(regulatory_text)
     print("\nExtracted Rules:\n", rules)
 
-    # Step 2: Map rules to dataset fields
+    # Step 3: Map rules to dataset fields
+    # Load sample dataset from CSV
+    csv_path = "sample_data.csv"  # Replace with your CSV file path
+    df = pd.read_csv(csv_path)
     field_mapping = map_rules_to_fields(rules, df.columns)
     print("\nField Mapping:\n", field_mapping)
 
-    # Step 3: Validate data against mapped rules
+    # Step 4: Validate data against mapped rules
     validation_results = validate_data(df, field_mapping)
     print("\nValidation Results:\n", validation_results)
 
-    # Step 4: Suggest remediation actions for flagged issues
+    # Step 5: Suggest remediation actions for flagged issues
     remediation_actions = suggest_remediation(df, field_mapping, validation_results)
     print("\nSuggested Remediation Actions (JSON):\n", remediation_actions)
 

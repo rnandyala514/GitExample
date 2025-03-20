@@ -1,3 +1,40 @@
+from transformers import pipeline
+
+# Step 1: Generate Data Profiling Rules using Hugging Face
+def generate_profiling_rules(document):
+    # Use GPT-2 (smaller model) and force CPU usage
+    generator = pipeline("text-generation", model="gpt2", device="cpu")
+    
+    prompt = f"""
+    Analyze the following regulatory document and generate data profiling rules:
+    {document}
+
+    Rules:
+    """
+    response = generator(prompt, max_length=200)
+    return response[0]["generated_text"]
+
+# Test the function
+if __name__ == "__main__":
+    # Sample regulatory document text
+    regulatory_text = """
+    Regulatory Reporting Requirements:
+    1. Field 'Customer_ID' must be a 10-digit number.
+    2. Field 'Transaction_Amount' must be a positive number.
+    3. Field 'Transaction_Date' must be in YYYY-MM-DD format.
+    4. Field 'Capital_Adequacy_Ratio' must be above 8%.
+    """
+
+    # Generate profiling rules
+    profiling_rules = generate_profiling_rules(regulatory_text)
+    print("Generated Profiling Rules:\n", profiling_rules)
+
+
+
+
+
+
+
 e **entire row of the transaction** to be included in the **remediation action output**, along with the **rule details** and the **specific field that failed validation**. This will make the remediation actions more comprehensive and actionable.
 
 Below is the **updated code** that includes the **entire transaction row** in the remediation action output.

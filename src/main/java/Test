@@ -1,96 +1,9 @@
+import json
+import re
+import pandas as pd
 from transformers import pipeline
 
-# Step 1: Generate Data Profiling Rules using Hugging Face
-def generate_profiling_rules(document):
-    # Use GPT-2 (smaller model) and force CPU usage
-    generator = pipeline("text-generation", model="gpt2", device="cpu")
-    
-    prompt = f"""
-    Analyze the following regulatory document and generate data profiling rules:
-    {document}
-
-    Rules:
-    """
-    response = generator(prompt, max_length=200)
-    return response[0]["generated_text"]
-
-# Test the function
-if __name__ == "__main__":
-    # Sample regulatory document text
-    regulatory_text = """
-    Regulatory Reporting Requirements:
-    1. Field 'Customer_ID' must be a 10-digit number.
-    2. Field 'Transaction_Amount' must be a positive number.
-    3. Field 'Transaction_Date' must be in YYYY-MM-DD format.
-    4. Field 'Capital_Adequacy_Ratio' must be above 8%.
-    """
-
-    # Generate profiling rules
-    profiling_rules = generate_profiling_rules(regulatory_text)
-    print("Generated Profiling Rules:\n", profiling_rules)
-
-
-
-
-
-
-
-e **entire row of the transaction** to be included in the **remediation action output**, along with the **rule details** and the **specific field that failed validation**. This will make the remediation actions more comprehensive and actionable.
-
-Below is the **updated code** that includes the **entire transaction row** in the remediation action output.
-
----
-
-### **Updated Code with Entire Transaction Row in Remediation Actions**
-
-```python
-import openai
-import pandas as pd
-import numpy as np
-from sklearn.ensemble import IsolationForest
-import PyPDF2
-import re  # For extracting field names from rules
-
-# Set your OpenAI API key
-openai.api_key = "your_openai_api_key"
-
-# Function to extract text from a PDF file
-def extract_text_from_pdf(pdf_path):
-    with open(pdf_path, "rb") as file:
-        reader = PyPDF2.PdfReader(file)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text()
-    return text
-
-# Step 1: Generate Data Profiling Rules using LLM
-def generate_profiling_rules(document):
-    prompt = f"""
-    Analyze the following regulatory document and generate data profiling rules:
-    {document}
-
-    Rules:
-    """
-    response = openai.Completion.create(
-        engine="text-davinci-003",
-        prompt=prompt,
-        max_tokens=200,
-    )
-    return response.choices[0].text.strip()
-
-# Step 2: Map Rules to Dataset Fields
-def map_rules_to_fields(rules):
-    # Extract field names from rules using regex
-    field_mapping = {}
-    for rule in rules.split("\n"):
-        if "Field" in rule:
-            field_name = re.search(r"Field '(.*?)'", rule)
-            if field_name:
-                field_name = field_name.group(1)
-                field_mapping[field_name] = rule
-    return field_mapping
-
-# Step 3: Validate Data Against Mapped Rules
+# Step 1: Validate Data Against Mapped Rules
 def validate_data(df, field_mapping):
     validation_results = {}
     for field, rule in field_mapping.items():
@@ -100,32 +13,28 @@ def validate_data(df, field_mapping):
             elif "must be a positive number" in rule:
                 validation_results[field] = df[field].apply(lambda x: x > 0)
             elif "must be in YYYY-MM-DD format" in rule:
-                validation_results[field] = df[field].apply(lambda x: re.match(r"\d{4}-\d{2}-\d{2}", str(x)) is not None)
+                # Correct regex for YYYY-MM-DD format
+                validation_results[field] = df[field].apply(lambda x: bool(re.match(r"^\d{4}-\d{2}-\d{2}$", str(x))))
             elif "must be above" in rule:
                 threshold = float(re.search(r"above (.*?)%", rule).group(1))
                 validation_results[field] = df[field].apply(lambda x: x > threshold)
     return validation_results
 
-# Step 4: Adaptive Risk Scoring using Unsupervised Learning
-def risk_scoring(df):
-    # Example: Risk scoring based on 'Transaction_Amount' and 'Capital_Adequacy_Ratio'
-    X = df[["Transaction_Amount", "Capital_Adequacy_Ratio"]].values
-
-    # Anomaly Detection using Isolation Forest
-    iso_forest = IsolationForest(contamination=0.1)
-    df["Risk_Score"] = iso_forest.fit_predict(X)
-
-    return df
-
-# Step 5: Suggest Remediation Actions with Entire Transaction Row
+# Step 2: Suggest Remediation Actions using Hugging Face
 def suggest_remediation(df, field_mapping, validation_results):
-    flagged_issues = df[df["Risk_Score"] == -1]  # Anomalies flagged by Isolation Forest
     suggestions = []
+    generator = pipeline("text-generation", model="gpt2", device="cpu")  # Change to "cuda" or "mps" if GPU is available
 
-    for _, row in flagged_issues.iterrows():
+    for index, row in df.iterrows():
+        # Initialize a dictionary for the current transaction
+        transaction = {
+            "transaction_row": row.to_dict(),
+            "violations": []
+        }
+
+        # Check each field for violations
         for field, rule in field_mapping.items():
-            if field in validation_results and not validation_results[field][row.name]:
-                # Include the entire row and rule details in the remediation action
+            if field in validation_results and not validation_results[field][index]:
                 prompt = f"""
                 The following transaction row has been flagged as anomalous:
                 {row.to_dict()}
@@ -137,31 +46,48 @@ def suggest_remediation(df, field_mapping, validation_results):
 
                 Remediation Action:
                 """
-                response = openai.Completion.create(
-                    engine="text-davinci-003",
-                    prompt=prompt,
-                    max_tokens=150,
-                )
-                suggestions.append(response.choices[0].text.strip())
+                # Generate text with max_new_tokens instead of max_length
+                response = generator(prompt, max_new_tokens=50, truncation=True)
+                remediation_action = response[0]["generated_text"].strip()
 
-    return suggestions
+                # Clean up the remediation action
+                remediation_action = cleanup_remediation_action(remediation_action, field, row[field])
+
+                # Add the violation details to the transaction
+                transaction["violations"].append({
+                    "violated_field": field,
+                    "violated_rule": rule,
+                    "remediation_action": remediation_action
+                })
+
+        # Add the transaction to the suggestions list if there are violations
+        if transaction["violations"]:
+            suggestions.append(transaction)
+
+    # Convert the list of suggestions to a JSON-formatted string
+    return json.dumps(suggestions, indent=4)
+
+def cleanup_remediation_action(action, field, value):
+    """
+    Clean up the remediation action to make it concise and consistent.
+    """
+    # Remove unnecessary phrases like "Remediation Action:"
+    if "Remediation Action:" in action:
+        action = action.split("Remediation Action:")[-1].strip()
+
+    # Remove repeated phrases or redundant text
+    action = action.replace("The following transaction row has been flagged as anomalous:", "").strip()
+    action = action.replace("The rule violated is:", "").strip()
+    action = action.replace("The field failed validation.", "").strip()
+
+    # Ensure the action is concise and relevant
+    if not action.startswith("Please"):
+        action = f"Please correct the value of '{field}' from '{value}' to comply with the rule."
+
+    return action
 
 # Main Workflow
 if __name__ == "__main__":
-    # Step 0: Extract text from the regulatory PDF
-    pdf_path = "basel_iii_requirements.pdf"  # Replace with your PDF file path
-    regulatory_text = extract_text_from_pdf(pdf_path)
-    print("Extracted Text from PDF:\n", regulatory_text)
-
-    # Step 1: Generate profiling rules from the regulatory text
-    profiling_rules = generate_profiling_rules(regulatory_text)
-    print("\nGenerated Profiling Rules:\n", profiling_rules)
-
-    # Step 2: Map rules to dataset fields
-    field_mapping = map_rules_to_fields(profiling_rules)
-    print("\nField Mapping:\n", field_mapping)
-
-    # Step 3: Validate data against mapped rules
     # Sample banking data (replace with actual dataset)
     data = {
         "Customer_ID": [1234567890, 987654321, 123456789, 12345678901],
@@ -171,151 +97,20 @@ if __name__ == "__main__":
     }
     df = pd.DataFrame(data)
 
+    # Step 1: Define field mapping and validate data
+    field_mapping = {
+        "Customer_ID": "Field 'Customer_ID' must be a 10-digit number.",
+        "Transaction_Amount": "Field 'Transaction_Amount' must be a positive number.",
+        "Transaction_Date": "Field 'Transaction_Date' must be in YYYY-MM-DD format.",
+        "Capital_Adequacy_Ratio": "Field 'Capital_Adequacy_Ratio' must be above 8%.",
+    }
     validation_results = validate_data(df, field_mapping)
     print("\nValidation Results:\n", validation_results)
 
-    # Step 4: Perform risk scoring on banking data
-    df = risk_scoring(df)
-    print("\nData with Risk Scores:\n", df)
-
-    # Step 5: Suggest remediation actions for flagged issues
+    # Step 2: Suggest remediation actions for flagged issues
     remediation_actions = suggest_remediation(df, field_mapping, validation_results)
-    print("\nSuggested Remediation Actions:\n", remediation_actions)
-```
+    print("\nSuggested Remediation Actions (JSON):\n", remediation_actions)
 
----
-
-### **Key Updates**
-1. **Include Entire Transaction Row**:
-   - The `suggest_remediation` function now includes the **entire transaction row** in the prompt sent to the LLM.
-   - Example:
-     ```
-     The following transaction row has been flagged as anomalous:
-     {'Customer_ID': 123456789, 'Transaction_Amount': 300.75, 'Transaction_Date': '2023/10/03', 'Capital_Adequacy_Ratio': 8.8}
-     ```
-
-2. **Enhanced Prompt**:
-   - The prompt now includes:
-     - The **entire transaction row**.
-     - The **rule that was violated**.
-     - The **specific field that failed validation**.
-   - Example:
-     ```
-     The following transaction row has been flagged as anomalous:
-     {'Customer_ID': 123456789, 'Transaction_Amount': 300.75, 'Transaction_Date': '2023/10/03', 'Capital_Adequacy_Ratio': 8.8}
-
-     The rule violated is:
-     Field 'Customer_ID' must be a 10-digit number.
-
-     The field 'Customer_ID' failed validation. Suggest a remediation action based on the above rule.
-     ```
-
----
-
-### **Example Output**
-
-#### Extracted Text from PDF:
-```
-Basel III Regulatory Requirements:
-1. Field 'Customer_ID' must be a 10-digit number.
-2. Field 'Transaction_Amount' must be a positive number.
-3. Field 'Transaction_Date' must be in YYYY-MM-DD format.
-4. Field 'Capital_Adequacy_Ratio' must be above 8%.
-```
-
-#### Generated Profiling Rules:
-```
-1. Field 'Customer_ID' must be a 10-digit number.
-2. Field 'Transaction_Amount' must be a positive number.
-3. Field 'Transaction_Date' must be in YYYY-MM-DD format.
-4. Field 'Capital_Adequacy_Ratio' must be above 8%.
-```
-
-#### Field Mapping:
-```
-{
-    "Customer_ID": "Field 'Customer_ID' must be a 10-digit number.",
-    "Transaction_Amount": "Field 'Transaction_Amount' must be a positive number.",
-    "Transaction_Date": "Field 'Transaction_Date' must be in YYYY-MM-DD format.",
-    "Capital_Adequacy_Ratio": "Field 'Capital_Adequacy_Ratio' must be above 8%."
-}
-```
-
-#### Validation Results:
-```
-{
-    "Customer_ID": [True, True, False, False],
-    "Transaction_Amount": [True, False, True, True],
-    "Transaction_Date": [True, True, False, True],
-    "Capital_Adequacy_Ratio": [True, False, True, False]
-}
-```
-
-#### Data with Risk Scores:
-```
-   Customer_ID  Transaction_Amount Transaction_Date  Capital_Adequacy_Ratio  Risk_Score
-0  1234567890              100.50       2023-10-01                    9.5           1
-1   987654321             -200.00       2023-10-02                    7.2          -1
-2   123456789              300.75       2023/10/03                    8.8           1
-3 12345678901              400.00       2023-10-04                    6.5          -1
-```
-
-#### Suggested Remediation Actions:
-```
-1. The following transaction row has been flagged as anomalous:
-   {'Customer_ID': 123456789, 'Transaction_Amount': 300.75, 'Transaction_Date': '2023/10/03', 'Capital_Adequacy_Ratio': 8.8}
-
-   The rule violated is:
-   Field 'Customer_ID' must be a 10-digit number.
-
-   The field 'Customer_ID' failed validation. Please correct the value 123456789 to a 10-digit number.
-
-2. The following transaction row has been flagged as anomalous:
-   {'Customer_ID': 12345678901, 'Transaction_Amount': 400.00, 'Transaction_Date': '2023-10-04', 'Capital_Adequacy_Ratio': 6.5}
-
-   The rule violated is:
-   Field 'Customer_ID' must be a 10-digit number.
-
-   The field 'Customer_ID' failed validation. Please correct the value 12345678901 to a 10-digit number.
-
-3. The following transaction row has been flagged as anomalous:
-   {'Customer_ID': 987654321, 'Transaction_Amount': -200.00, 'Transaction_Date': '2023-10-02', 'Capital_Adequacy_Ratio': 7.2}
-
-   The rule violated is:
-   Field 'Transaction_Amount' must be a positive number.
-
-   The field 'Transaction_Amount' failed validation. Please correct the value -200.00 to a positive number.
-
-4. The following transaction row has been flagged as anomalous:
-   {'Customer_ID': 123456789, 'Transaction_Amount': 300.75, 'Transaction_Date': '2023/10/03', 'Capital_Adequacy_Ratio': 8.8}
-
-   The rule violated is:
-   Field 'Transaction_Date' must be in YYYY-MM-DD format.
-
-   The field 'Transaction_Date' failed validation. Please correct the value 2023/10/03 to YYYY-MM-DD format.
-
-5. The following transaction row has been flagged as anomalous:
-   {'Customer_ID': 987654321, 'Transaction_Amount': -200.00, 'Transaction_Date': '2023-10-02', 'Capital_Adequacy_Ratio': 7.2}
-
-   The rule violated is:
-   Field 'Capital_Adequacy_Ratio' must be above 8%.
-
-   The field 'Capital_Adequacy_Ratio' failed validation. Please increase the ratio from 7.2 to at least 8%.
-
-6. The following transaction row has been flagged as anomalous:
-   {'Customer_ID': 12345678901, 'Transaction_Amount': 400.00, 'Transaction_Date': '2023-10-04', 'Capital_Adequacy_Ratio': 6.5}
-
-   The rule violated is:
-   Field 'Capital_Adequacy_Ratio' must be above 8%.
-
-   The field 'Capital_Adequacy_Ratio' failed validation. Please increase the ratio from 6.5 to at least 8%.
-```
-
----
-
-### **Next Steps**
-1. Replace the sample PDF and banking data with your actual files.
-2. Fine-tune the validation logic for additional rule types.
-3. Deploy the solution as a microservice or integrate it into your data pipeline.
-
-Let me know if you need further assistance
+    # Save JSON output to a file
+    with open("remediation_suggestions.json", "w") as file:
+        file.write(remediation_actions)

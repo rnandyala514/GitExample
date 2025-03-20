@@ -1,0 +1,87 @@
+import openai
+import pandas as pd
+import numpy as np
+from sklearn.cluster import KMeans
+from sklearn.ensemble import IsolationForest
+
+# Set your OpenAI API key
+openai.api_key = "your_openai_api_key"
+
+# Sample regulatory document (replace with actual document text)
+regulatory_document = """
+Regulatory Reporting Requirements:
+1. Field 'Customer_ID' must be a 10-digit number.
+2. Field 'Transaction_Amount' must be a positive number.
+3. Field 'Transaction_Date' must be in YYYY-MM-DD format.
+"""
+
+# Sample banking data (replace with actual dataset)
+data = {
+    "Customer_ID": [1234567890, 987654321, 123456789, 12345678901],
+    "Transaction_Amount": [100.50, -200.00, 300.75, 400.00],
+    "Transaction_Date": ["2023-10-01", "2023-10-02", "2023/10/03", "2023-10-04"],
+}
+df = pd.DataFrame(data)
+
+# Step 1: Generate Data Profiling Rules using LLM
+def generate_profiling_rules(document):
+    prompt = f"""
+    Analyze the following regulatory document and generate data profiling rules:
+    {document}
+
+    Rules:
+    """
+    response = openai.Completion.create(
+        engine="text-davinci-003",
+        prompt=prompt,
+        max_tokens=200,
+    )
+    return response.choices[0].text.strip()
+
+profiling_rules = generate_profiling_rules(regulatory_document)
+print("Generated Profiling Rules:\n", profiling_rules)
+
+# Step 2: Adaptive Risk Scoring using Unsupervised Learning
+def risk_scoring(df):
+    # Example: Risk scoring based on 'Transaction_Amount'
+    X = df[["Transaction_Amount"]].values
+
+    # Anomaly Detection using Isolation Forest
+    iso_forest = IsolationForest(contamination=0.1)
+    df["Risk_Score"] = iso_forest.fit_predict(X)
+
+    # Clustering using KMeans
+    kmeans = KMeans(n_clusters=2)
+    df["Cluster"] = kmeans.fit_predict(X)
+
+    return df
+
+df = risk_scoring(df)
+print("\nData with Risk Scores:\n", df)
+
+# Step 3: Suggest Remediation Actions using LLM
+def suggest_remediation(df):
+    flagged_issues = df[df["Risk_Score"] == -1]  # Anomalies flagged by Isolation Forest
+    suggestions = []
+
+    for _, row in flagged_issues.iterrows():
+        prompt = f"""
+        The following data row has been flagged as anomalous:
+        {row.to_dict()}
+
+        Suggest a remediation action based on the following profiling rules:
+        {profiling_rules}
+
+        Remediation Action:
+        """
+        response = openai.Completion.create(
+            engine="text-davinci-003",
+            prompt=prompt,
+            max_tokens=100,
+        )
+        suggestions.append(response.choices[0].text.strip())
+
+    return suggestions
+
+remediation_actions = suggest_remediation(df)
+print("\nSuggested Remediation Actions:\n", remediation_actions)

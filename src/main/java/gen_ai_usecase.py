@@ -48,7 +48,7 @@ def parse_rules_with_openai(text):
     
     # Call OpenAI API
     response = client.chat.completions.create(
-        model="gpt-4",  # Use "gpt-4" or "gpt-4-turbo"
+        model="gpt-4",  # Use "gpt-4o-mini" or "gpt-4-turbo"
         messages=[
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": prompt}

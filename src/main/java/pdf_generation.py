@@ -13,9 +13,9 @@ This document outlines the regulatory compliance rules for banking transactions.
 
 **Rules:**
 
-1. Field 'Customer_ID' must be a 10-digit number.
+1. Customer ID must be a 10-digit number.
 
-2. Field 'Transaction_Amount' must be a positive number between $500 and $10,000.
+2. Transaction Amount must be a positive number between $500 and $10,000.
 
 3. Field 'Transaction_Date' must be in YYYY-MM-DD format.
 

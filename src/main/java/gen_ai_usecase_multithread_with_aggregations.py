@@ -4,9 +4,11 @@ from openai import OpenAI
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
+from fuzzywuzzy import process  # Import the process object
 
 # Initialize the OpenAI client
 client = OpenAI(api_key="")  # Replace with your OpenAI API key
+
 # Step 1: Extract text from the PDF
 def extract_text_from_pdf(pdf_path):
     """
@@ -24,13 +26,15 @@ def parse_rules_with_openai(text):
     Uses OpenAI GPT to extract rules from the text and return them in a structured format.
     """
     prompt = f"""
-    You are a regulatory compliance assistant. Your task is to extract rules from the following text and return them in a JSON format. The rules may include constraints like digit length, positive numbers, date formats, numeric ranges, or allowed values.
+    You are a regulatory compliance assistant. Your task is to extract rules from the following text and return them in a JSON format. The rules may include constraints like digit length, positive numbers, date formats, numeric ranges, allowed values, or aggregated amounts over a time period.
 
     Rules should be extracted as follows:
     1. For numeric fields: Specify the field name, type (e.g., "min_value", "max_value", "range"), and value(s).
     2. For text fields: Specify the field name, type (e.g., "allowed_values"), and allowed values.
     3. For date fields: Specify the field name, type (e.g., "date_format"), and the required format.
     4. For dependent rules: Specify the field name, type (e.g., "conditional_range"), and conditions.
+    5. For aggregated amounts: Specify the field name, type (e.g., "aggregated_amount"), time period (e.g., "last_one_year"), and threshold.
+    6. For high-frequency transactions: Specify the field name, type (e.g., "high_frequency"), time period (e.g., "last_one_year"), and threshold.
 
     Text:
     {text}
@@ -38,14 +42,9 @@ def parse_rules_with_openai(text):
     Return the rules as a JSON array. For example:
     [
         {{"type": "digit_length", "field": "Customer_ID", "value": 10}},
-        {{"type": "conditional_range", "field": "Transaction Amount", "conditions": [
-            {{"if": {{"field": "Account_Type", "value": "Savings"}}, "min": 100, "max": 1000}},
-            {{"if": {{"field": "Account_Type", "value": ["Checking", "Loan"]}}, "min": 100, "max": 1000000}}
-        ]}},
-        {{"type": "date_format", "field": "Transaction_Date", "value": "YYYY-MM-DD"}},
-        {{"type": "min_value", "field": "Capital_Adequacy_Ratio", "value": 8}},
-        {{"type": "allowed_values", "field": "Account_Type", "values": ["Savings", "Checking", "Loan"]}},
-        {{"type": "allowed_values", "field": "Transaction_Type", "values": ["Deposit", "Withdrawal", "Transfer"]}}
+        {{"type": "min_value", "field": "Transaction_Amount", "value": 100}},
+        {{"type": "aggregated_amount", "field": "Transaction_Amount", "time_period": "last_one_year", "threshold": 2000}},
+        {{"type": "high_frequency", "field": "Transaction_Amount", "time_period": "last_one_year", "threshold": 10}}
     ]
 
     IMPORTANT: Your response must be valid JSON. Do not include any additional text or explanations.
@@ -53,7 +52,7 @@ def parse_rules_with_openai(text):
     
     # Call OpenAI API
     response = client.chat.completions.create(
-        model="gpt-4o-mini",  # Use "gpt-4-turbo" or "gpt-4o-mini"
+        model="gpt-4-turbo",  # Use "gpt-4-turbo" or "gpt-4o-mini"
         messages=[
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": prompt}
@@ -94,32 +93,50 @@ def pre_aggregate_data(dataset):
     dataset = dataset.merge(aggregated_data, on='Customer_ID', how='left')
     return dataset
 
-# Step 4: Map regulatory rules to dataset columns
+# Step 4: Map regulatory rules to dataset columns using fuzzy matching
 def map_rules_to_dataset(rules, dataset):
     """
-    Maps regulatory rules to the corresponding dataset columns.
+    Maps regulatory rules to the corresponding dataset columns using fuzzy matching.
     """
-    column_mapping = {
-        "Transaction Amount": "Transaction_Amt",  # Map "Transaction Amount" to "Transaction_Amt"
-        "Customer_ID": "Customer_ID",
-        "Account_Type": "Account_Type",
-        "Transaction_Date": "Transaction_Date",
-        "Capital_Adequacy_Ratio": "Capital_Adequacy_Ratio",
-        "Transaction_Type": "Transaction_Type"
-    }
+    # Get the list of columns in the dataset
+    dataset_columns = dataset.columns.tolist()
     
     mapped_rules = []
     for rule in rules:
-        if rule["field"] in column_mapping:
-            rule["field"] = column_mapping[rule["field"]]
+        # Use fuzzy matching to find the best match for the rule's field
+        match, score = process.extractOne(rule["field"], dataset_columns)
+        
+        # If the match score is above a threshold (e.g., 80), use the matched column
+        if score >= 80:
+            rule["field"] = match
             mapped_rules.append(rule)
+        else:
+            print(f"Warning: No match found for field '{rule['field']}'. Skipping rule.")
+    
     return mapped_rules
-
 # Step 5: Validate a batch of records using OpenAI GPT
 def validate_batch_with_openai(batch, rules, start_index):
     """
     Validates a batch of records against the rules using OpenAI GPT.
     """
+    violations = []
+    
+    # Add custom validation for aggregated rules
+    for rule in rules:
+        if rule["type"] == "aggregated_amount":
+            # Group by customer and calculate total amount
+            customer_aggregates = batch.groupby("Customer_ID")["Transaction_Amt"].sum().reset_index()
+            
+            # Check for violations
+            for _, row in customer_aggregates.iterrows():
+                if row["Transaction_Amt"] > rule["threshold"]:
+                    violations.append({
+                        "record_id": row["Customer_ID"],
+                        "record": row.to_dict(),
+                        "violations": [f"Aggregated amount {row['Transaction_Amt']} exceeds threshold {rule['threshold']}"]
+                    })
+    
+    # Rest of the OpenAI validation logic
     prompt = f"""
     You are a regulatory compliance assistant. Your task is to validate the following batch of records against the given rules. Return a JSON object with the following fields:
     - "results": a list of validation results for each record, where each result contains:
@@ -193,9 +210,9 @@ def validate_dataset_with_openai(dataset, rules, batch_size=100):
     return violations
 
 # Step 7: Display violations in a user-friendly format
-def display_violations(violations):
+def display_violations(violations, rules):
     """
-    Displays violations in a user-friendly format.
+    Displays violations in a user-friendly format, including aggregated amounts and thresholds.
     """
     if not violations:
         print("No violations found. All records are valid.")
@@ -208,6 +225,14 @@ def display_violations(violations):
         print("Violated Rules:")
         for rule in violation["violations"]:
             print(f"  - {rule}")
+        
+        # Check for aggregated amount violations
+        for rule in rules:
+            if rule["type"] == "aggregated_amount":
+                total_amount = violation["record"].get("Total_Amount")
+                if total_amount and total_amount > rule["threshold"]:
+                    print(f"  - Aggregated amount {total_amount} exceeds threshold {rule['threshold']}")
+
 
 # Step 8: Main workflow
 def main(pdf_path, dataset_path):
@@ -220,15 +245,15 @@ def main(pdf_path, dataset_path):
     
     # Step 2: Parse rules using OpenAI GPT
     rules = parse_rules_with_openai(text)
-    print("Parsed Rules:\n", json.dumps(rules, indent=2))
+    print("\nParsed Rules:\n", json.dumps(rules, indent=2))
     
     # Step 3: Load the dataset
     dataset = pd.read_csv(dataset_path)  # Assuming the dataset is in CSV format
-    print("\nDataset Sample:\n", dataset.head())
+    print("\nDataset:\n", dataset)
     
     # Step 4: Pre-aggregate transaction data
     dataset = pre_aggregate_data(dataset)
-    print("\nDataset with Aggregated Data:\n", dataset.head())
+    print("\nAggregated Dataset:\n", dataset)
     
     # Step 5: Map regulatory rules to dataset columns
     mapped_rules = map_rules_to_dataset(rules, dataset)
@@ -238,7 +263,7 @@ def main(pdf_path, dataset_path):
     violations = validate_dataset_with_openai(dataset, mapped_rules)
     
     # Step 7: Display violations
-    display_violations(violations)
+    display_violations(violations, mapped_rules)
 
 # Example usage
 if __name__ == "__main__":

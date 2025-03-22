@@ -13,11 +13,15 @@ This document outlines the regulatory compliance rules for banking transactions.
 
 **Rules:**
 
+0. Aggregated Transaction Amount: The total transaction amount for a customer must not exceed $1000.
+
 1. Customer ID must be a 10-digit number.
 
-2. Transaction Amount must be a positive number between $500 and $10,000.
+2. Transaction Amount must be a positive number. The range depends on the Account_Type:
+   - If Account_Type is 'Savings', the amount must be between $100 and $1,000.
+   - For other account types, the amount must be between $100 and $1,000,000.
 
-3. Field 'Transaction_Date' must be in YYYY-MM-DD format.
+3. Transaction_Date must be in YYYY-MM-DD format.
 
 4. Field 'Capital_Adequacy_Ratio' must be above 8%.
 
@@ -28,8 +32,6 @@ This document outlines the regulatory compliance rules for banking transactions.
 7. Field 'Transaction_Date' shoud not be greater than current date.
 
 8. Field 'Transaction_Date' should be greater than 2024-01-01.
-
-
 """
 
 # Write the content to the PDF

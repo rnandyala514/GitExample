@@ -2,4 +2,6 @@ Customer_ID,Transaction_Amt,Transaction_Date,Capital_Adequacy_Ratio,Account_Type
 1234567890,90.50,2019-10-01,9.5,Savings,Deposit
 987654321,200.00,2028-10-02,7.2,Checking,Withdrawal
 123456789,300.75,2024-11-03,8.8,Loan,Transfer
-12345678901,400.00,2024-10-04,6.5,Savings,Deposit
+12345678901,600.00,2024-10-04,6.5,Savings,Deposit
+12345678901,2000.00,2024-10-05,6.5,Savings,Deposit
+12345678901,900.00,2024-11-04,9,Savings,Deposit

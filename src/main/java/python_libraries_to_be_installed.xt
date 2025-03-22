@@ -1,3 +1,4 @@
 pip install openai pdfplumber pandas fpdf
 pip install fuzzywuzzy
 pip install python-Levenshtein
+pip install transformers datasets
